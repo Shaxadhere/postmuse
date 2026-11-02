@@ -1,0 +1,19 @@
+{
+  "name": "",
+  "handle": "",
+  "website": "",
+  "logo": "",
+  "colors": [
+    { "name": "Ink", "hex": "#16161d" },
+    { "name": "Paper", "hex": "#f6f2ea" },
+    { "name": "Accent", "hex": "#ff5a36" },
+    { "name": "Sun", "hex": "#ffd23f" },
+    { "name": "Sky", "hex": "#9cc7ff" },
+    { "name": "White", "hex": "#ffffff" }
+  ],
+  "fonts": [
+    { "name": "Display", "family": "Inter", "package": "inter", "weights": [700, 800, 900], "italic": false },
+    { "name": "Body", "family": "Inter", "package": "inter", "weights": [400, 500, 600], "italic": false },
+    { "name": "Accent", "family": "Instrument Serif", "package": "instrument-serif", "weights": [400], "italic": true }
+  ]
+}

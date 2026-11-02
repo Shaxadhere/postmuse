@@ -1,0 +1,18 @@
+{
+  "name": "atelier-studio",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Atelier: a local editor for social media posts designed by Postmuse.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "photo": "node scripts/photo.mjs",
+    "check": "node scripts/check.mjs"
+  },
+  "dependencies": {
+    "@fontsource/instrument-serif": "^5.1.0",
+    "@fontsource/inter": "^5.1.0",
+    "html-to-image": "^1.11.11",
+    "sharp": "^0.35.5"
+  }
+}

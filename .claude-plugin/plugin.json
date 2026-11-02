@@ -1,0 +1,7 @@
+{
+  "name": "postmuse",
+  "version": "1.0.0",
+  "description": "Postmuse designs on-brand social media posts from a prompt, edits your photos, and hands you Atelier, a local editor to finish them in the browser.",
+  "author": { "name": "Shehzad Ahmed" },
+  "keywords": ["social media", "instagram", "design", "posts", "editor"]
+}

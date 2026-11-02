@@ -1,0 +1,11 @@
+{
+  "name": "postmuse",
+  "owner": { "name": "Shehzad Ahmed" },
+  "plugins": [
+    {
+      "name": "postmuse",
+      "source": "./",
+      "description": "Design on-brand social media posts from a prompt and finish them in Atelier, a local browser editor."
+    }
+  ]
+}

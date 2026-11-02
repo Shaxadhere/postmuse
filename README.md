@@ -9,13 +9,13 @@
 ### Option A: as a Claude Code plugin (recommended)
 Inside Claude Code:
 ```
-/plugin marketplace add <your-github-user>/postmuse
+/plugin marketplace add Shaxadhere/postmuse
 /plugin install postmuse@postmuse
 ```
 
 ### Option B: copy the skill folder
 ```bash
-git clone https://github.com/<your-github-user>/postmuse.git
+git clone https://github.com/Shaxadhere/postmuse.git
 mkdir -p ~/.claude/skills
 cp -R postmuse/skills/postmuse ~/.claude/skills/postmuse
 ```

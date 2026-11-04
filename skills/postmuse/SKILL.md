@@ -53,11 +53,11 @@ If the user has said "just go" or you can't reach them, build anyway. Use a **ph
 6. **Carousels:** one post per slide (`<slug>-1`, `<slug>-2`, …), all the same size, sharing one design system.
 
 ## 4. Edit photos
-The user's photos go into `posts/<slug>/assets/`. Never edit the originals in place.
+The user's photos go into the studio's photo library, `photos/<folder>/`, and posts use them as `src="/photos/<folder>/<file>"`. Use the post's slug as the folder (`photos/<slug>/`) unless the user has already organized their photos into folders; then use theirs, and reuse a photo that's already in the library instead of copying it. Name files in lowercase with hyphens (`cold-brew-hero.jpg`). The user manages the library on Atelier's **Photos** page. Never edit the originals in place.
 
 - **Crop, reframe, resize and strong styles:** use the bundled script, which writes a new file. Crop to the **size of the photo's slot** in your layout, not always the full post. A photo above a 470px text band in a 1080×1350 post is 1080×880:
   ```bash
-  npm run photo -- <in> posts/<slug>/assets/<name>.jpg --size 1080x880 --focus 50,35
+  npm run photo -- <in> photos/<slug>/<name>.jpg --size 1080x880 --focus 50,35
   ```
   Other options: `--zoom`, `--contain --pad-color`, `--rotate`, `--flip`, `--grayscale`, `--duotone A,B`, `--tint HEX`, `--blur`, `--sharpen`, `--vignette`, `--round`, plus color controls. Run `npm run photo -- --help` for the full list. Set `--focus` to where the subject is (faces, product) so the crop keeps it.
 - **Avoid big enlargements.** If the source is much smaller than the slot (more than about 1.3× upscaling), pick a layout with a smaller photo slot, or add `--sharpen` and tell the user it may look soft.

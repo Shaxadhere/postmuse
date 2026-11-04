@@ -1,12 +1,13 @@
 // Atelier: serves the post editor and reads/writes posts in ./posts. No framework, no build step.
 import http from 'node:http';
-import { readFile, writeFile, readdir, mkdir, stat } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, stat, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const POSTS = path.join(ROOT, 'posts');
 const BRAND = path.join(ROOT, 'brand');
+const PHOTOS = path.join(ROOT, 'photos');
 const FONTSOURCE = path.join(ROOT, 'node_modules/@fontsource');
 const PORT = Number(process.env.PORT) || 4747;
 
@@ -24,6 +25,7 @@ const STATIC = [
   ['/editor/', path.join(ROOT, 'editor')],
   ['/brand/', BRAND],
   ['/posts/', POSTS],
+  ['/photos/', PHOTOS],
   ['/vendor/html-to-image/', path.join(ROOT, 'node_modules/html-to-image/dist')],
   ['/vendor/fontsource/', FONTSOURCE],
 ];
@@ -95,8 +97,8 @@ async function listPosts() {
   return out.sort((a, b) => b.updated - a.updated);
 }
 
-function slugify(text) {
-  return String(text || 'post').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'post';
+function slugify(text, fallback = 'post') {
+  return String(text || fallback).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || fallback;
 }
 
 async function createPost({ title, w, h, format }) {
@@ -109,16 +111,168 @@ async function createPost({ title, w, h, format }) {
   const family = body ? `'${body.family}', sans-serif` : 'sans-serif';
   let slug = slugify(title);
   for (let i = 2; await exists(path.join(POSTS, slug)); i++) slug = `${slugify(title)}-${i}`;
-  await mkdir(path.join(POSTS, slug, 'assets'), { recursive: true });
+  await mkdir(path.join(POSTS, slug), { recursive: true });
   const html = `<div data-post data-w="${w}" data-h="${h}" style="position: relative; overflow: hidden; width: ${w}px; height: ${h}px; background: ${bg}; font-family: ${family}; color: ${ink};">\n</div>\n`;
   await writeFile(path.join(POSTS, slug, 'post.html'), html);
   await writeFile(path.join(POSTS, slug, 'post.json'), JSON.stringify({ title: title || 'Untitled post', idea: '', format: format || `${w}x${h}` }, null, 2) + '\n');
   return slug;
 }
 
+// ---------- photo library: photos/<file> (Unsorted) and photos/<folder>/<file>, one level of folders ----------
+// Posts use these as src="/photos/<folder>/<file>". The browser sends paths like "folder/file.jpg";
+// anything absolute, with "..", a backslash or a dotfile is refused so nothing outside photos/ is touched.
+function photoPath(rel, kind = 'file') {
+  rel = String(rel ?? '');
+  const parts = rel.split('/');
+  const bad = !rel || path.isAbsolute(rel) || /[\\\0]/.test(rel) || parts.length > (kind === 'file' ? 2 : 1) ||
+    parts.some((p) => !p || p.startsWith('.') || p.length > 128) ||
+    (kind === 'file' && !IMAGE_EXT.has(path.extname(rel).toLowerCase()));
+  const abs = path.resolve(PHOTOS, rel);
+  if (bad || !abs.startsWith(PHOTOS + path.sep)) throw Object.assign(new Error(`Bad ${kind} name`), { status: 400 });
+  return abs;
+}
+const folderPath = (name) => (name ? photoPath(name, 'folder') : PHOTOS);
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const fileRef = (rel, flags = '') => new RegExp(`/photos/${escapeRe(rel)}(?![\\w.-])`, flags);
+const fail = (status, message, extra = {}) => Object.assign(new Error(message), { status, extra });
+const usersOf = (rel, posts) => posts.filter((p) => fileRef(rel).test(p.html)).map((p) => ({ slug: p.slug, title: p.title }));
+
+async function postHtmls() {
+  const out = [];
+  for (const p of await listPosts()) out.push({ ...p, html: await readFile(path.join(POSTS, p.slug, 'post.html'), 'utf8') });
+  return out;
+}
+
+// Rewrites saved posts after a move or rename so their photos keep working.
+async function rewriteRefs(pattern, replacement) {
+  const changed = [];
+  for (const p of await postHtmls()) {
+    const html = p.html.replace(pattern, () => replacement);
+    if (html !== p.html) { await writeFile(path.join(POSTS, p.slug, 'post.html'), html); changed.push(p.slug); }
+  }
+  return changed;
+}
+
+async function listPhotos() {
+  await mkdir(PHOTOS, { recursive: true });
+  const posts = await postHtmls();
+  const folders = [{ name: '', photos: [] }];
+  const add = async (folder, file) => {
+    const rel = folder.name ? `${folder.name}/${file}` : file;
+    const { size, mtimeMs } = await stat(path.join(PHOTOS, rel));
+    folder.photos.push({ name: file, path: rel, src: `/photos/${rel}`, size, updated: mtimeMs, usedBy: usersOf(rel, posts) });
+  };
+  const isImage = (e) => e.isFile() && !e.name.startsWith('.') && IMAGE_EXT.has(path.extname(e.name).toLowerCase());
+  for (const entry of await readdir(PHOTOS, { withFileTypes: true })) {
+    if (entry.name.startsWith('.')) continue;
+    if (entry.isDirectory()) folders.push({ name: entry.name, photos: [] });
+    else if (isImage(entry)) await add(folders[0], entry.name);
+  }
+  for (const folder of folders.slice(1)) {
+    for (const entry of await readdir(path.join(PHOTOS, folder.name), { withFileTypes: true })) if (isImage(entry)) await add(folder, entry.name);
+  }
+  for (const folder of folders) folder.photos.sort((a, b) => b.updated - a.updated);
+  return [folders[0], ...folders.slice(1).sort((a, b) => a.name.localeCompare(b.name))];
+}
+
+function usedError(name, usedBy) {
+  const titles = [...new Set(usedBy.map((u) => `“${u.title}”`))].join(', ');
+  return fail(409, `${name} is used in ${titles}. Remove it from ${usedBy.length > 1 ? 'those posts' : 'that post'} first.`, { usedBy });
+}
+
+async function uniqueFile(dir, file) {
+  const ext = path.extname(file), base = file.slice(0, -ext.length);
+  let name = file;
+  for (let i = 2; await exists(path.join(dir, name)); i++) name = `${base}-${i}${ext}`;
+  return name;
+}
+
+async function handlePhotos(req, res, url, parts) {
+  const json = async () => JSON.parse((await readBody(req)).toString('utf8') || '{}');
+  const q = (k) => url.searchParams.get(k) || '';
+
+  if (parts.length === 2 && req.method === 'GET') return send(res, 200, { folders: await listPhotos() });
+
+  // POST /api/photos?folder=summer&name=photo.jpg  (raw file body)
+  if (parts.length === 2 && req.method === 'POST') {
+    const raw = path.basename(q('name') || 'image.png').toLowerCase();
+    const ext = path.extname(raw);
+    if (!IMAGE_EXT.has(ext)) return send(res, 400, { error: 'Images only' });
+    const base = raw.slice(0, -ext.length).replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || 'image';
+    const dir = folderPath(q('folder'));
+    await mkdir(dir, { recursive: true });
+    const name = await uniqueFile(dir, base + ext);
+    await writeFile(path.join(dir, name), await readBody(req));
+    const rel = q('folder') ? `${q('folder')}/${name}` : name;
+    return send(res, 200, { path: rel, src: `/photos/${rel}` });
+  }
+
+  // DELETE /api/photos?path=summer/photo.jpg  (refused while a post uses it)
+  if (parts.length === 2 && req.method === 'DELETE') {
+    const rel = q('path');
+    const file = photoPath(rel);
+    if (!(await exists(file))) return send(res, 404, { error: 'No such photo' });
+    const usedBy = usersOf(rel, await postHtmls());
+    if (usedBy.length) throw usedError(`“${path.basename(rel)}”`, usedBy);
+    await rm(file);
+    return send(res, 200, { ok: true });
+  }
+
+  // POST /api/photos/move  { path: "summer/photo.jpg", folder: "winter" }  ("" = Unsorted)
+  if (parts[2] === 'move' && req.method === 'POST') {
+    const { path: rel, folder = '' } = await json();
+    const from = photoPath(rel);
+    const dir = folderPath(folder);
+    if (!(await exists(from))) return send(res, 404, { error: 'No such photo' });
+    if (!(await exists(dir))) return send(res, 404, { error: 'No such folder' });
+    if (path.dirname(from) === dir) return send(res, 200, { path: rel, updated: [] });
+    const name = await uniqueFile(dir, path.basename(from));
+    const to = folder ? `${folder}/${name}` : name;
+    await rename(from, path.join(dir, name));
+    return send(res, 200, { path: to, updated: await rewriteRefs(fileRef(rel, 'g'), `/photos/${to}`) });
+  }
+
+  if (parts[2] !== 'folders') return send(res, 404, { error: 'Not found' });
+
+  // POST /api/photos/folders  { name: "Summer shoot" } → photos/summer-shoot/
+  if (req.method === 'POST') {
+    const name = slugify((await json()).name, 'folder');
+    const dir = folderPath(name);
+    if (await exists(dir)) return send(res, 409, { error: `A folder called “${name}” already exists` });
+    await mkdir(dir);
+    return send(res, 200, { name });
+  }
+
+  // PUT /api/photos/folders  { from: "summer", to: "Summer 2026" }
+  if (req.method === 'PUT') {
+    const body = await json();
+    const from = folderPath(body.from), name = slugify(body.to, 'folder');
+    if (!body.from || !(await exists(from))) return send(res, 404, { error: 'No such folder' });
+    if (name === body.from) return send(res, 200, { name, updated: [] });
+    if (await exists(folderPath(name))) return send(res, 409, { error: `A folder called “${name}” already exists` });
+    await rename(from, folderPath(name));
+    return send(res, 200, { name, updated: await rewriteRefs(new RegExp(`/photos/${escapeRe(body.from)}/`, 'g'), `/photos/${name}/`) });
+  }
+
+  // DELETE /api/photos/folders?name=summer  (deletes its photos too; refused while a post uses any of them)
+  if (req.method === 'DELETE') {
+    const name = q('name');
+    const dir = folderPath(name);
+    if (!name || !(await exists(dir))) return send(res, 404, { error: 'No such folder' });
+    const folder = (await listPhotos()).find((f) => f.name === name);
+    const usedBy = folder.photos.flatMap((p) => p.usedBy);
+    if (usedBy.length) throw usedError(`A photo in “${name}”`, usedBy);
+    await rm(dir, { recursive: true });
+    return send(res, 200, { ok: true });
+  }
+
+  return send(res, 405, { error: 'Method not allowed' });
+}
+
 async function handleApi(req, res, url) {
   const parts = url.pathname.split('/').filter(Boolean); // ['api', 'posts', slug, …]
   if (parts[1] === 'brand' && req.method === 'GET') return send(res, 200, await readBrand());
+  if (parts[1] === 'photos') return handlePhotos(req, res, url, parts);
   if (parts[1] !== 'posts') return send(res, 404, { error: 'Not found' });
   if (parts.length === 2 && req.method === 'GET') return send(res, 200, await listPosts());
   if (parts.length === 2 && req.method === 'POST') {
@@ -143,19 +297,6 @@ async function handleApi(req, res, url) {
     if (typeof html !== 'string' || !html.includes('data-post')) return send(res, 400, { error: 'Missing post root' });
     await writeFile(path.join(dir, 'post.html'), html.trimEnd() + '\n');
     return send(res, 200, { ok: true });
-  }
-
-  // POST /api/posts/:slug/assets?name=photo.jpg  (raw file body)
-  if (parts[3] === 'assets' && req.method === 'POST') {
-    const raw = path.basename(url.searchParams.get('name') || 'image.png').toLowerCase();
-    const ext = path.extname(raw);
-    if (!IMAGE_EXT.has(ext)) return send(res, 400, { error: 'Images only' });
-    const base = raw.slice(0, -ext.length).replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || 'image';
-    await mkdir(path.join(dir, 'assets'), { recursive: true });
-    let name = base + ext;
-    for (let i = 2; await exists(path.join(dir, 'assets', name)); i++) name = `${base}-${i}${ext}`;
-    await writeFile(path.join(dir, 'assets', name), await readBody(req));
-    return send(res, 200, { src: `assets/${name}` });
   }
 
   return send(res, 405, { error: 'Method not allowed' });
@@ -185,7 +326,7 @@ http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/')) await handleApi(req, res, url);
     else await handleStatic(req, res, url);
   } catch (err) {
-    send(res, err.status || 500, { error: err.message });
+    send(res, err.status || 500, { error: err.message, ...err.extra });
   }
 }).listen(PORT, '127.0.0.1', () => {
   console.log(`Atelier is open → http://localhost:${PORT}`);

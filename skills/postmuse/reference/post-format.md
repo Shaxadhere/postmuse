@@ -1,13 +1,18 @@
 # Atelier post format
 
-Each post lives in `posts/<slug>/`:
+Each post lives in `posts/<slug>/`. Photos live in the studio's shared library, `photos/`:
 
 ```
 posts/<slug>/
   post.json     { "title": "Short name", "idea": "One line on the idea", "format": "instagram-portrait" }
   post.html     the post itself (rules below)
-  assets/       photos and images for this post only
+photos/
+  <folder>/     one level of folders; default to the post's slug (photos/<slug>/)
+    <file>.jpg  lowercase letters, digits and hyphens: cold-brew-hero.jpg
+  <file>.jpg    photos directly in photos/ show as "Unsorted"
 ```
+
+The user browses this library on Atelier's **Photos** page, where they create, rename and delete folders, move photos between them and delete unused photos. Atelier refuses to delete a photo that any `post.html` still references. When a photo is moved or a folder renamed, Atelier rewrites the `/photos/…` paths in saved posts, so always re-read `post.html` before editing it. Older posts may still use a per-post `posts/<slug>/assets/` folder; that keeps working, but put new photos in `photos/`.
 
 ## post.html
 `post.html` holds **one root element and nothing else**: no `<html>`, `<head>`, `<style>`, `<script>` or comments outside the root.
@@ -26,11 +31,11 @@ posts/<slug>/
 5. **Text is literal markup.** Use `<br>` for line breaks and `white-space: nowrap` on headlines whose line breaks you control. For an accent word, wrap it in a `<span style="…">` with its own font, style or color. Use `div` for text by default. If you use `h1`–`h6` or `p`, add `margin: 0`.
 6. **Fonts:** only the families listed in `brand/brand.json` are loaded. Use them by name with a generic fallback: `font-family: 'Inter', sans-serif`. Use only the weights listed there.
 7. **No emoji and no icon fonts.** They export inconsistently. Use shapes, inline SVG or words instead.
-8. **Nothing external.** No remote URLs. Images are `assets/<file>` (this post) or `/brand/<file>` (logo and shared brand files).
+8. **Nothing external.** No remote URLs. Images are `/photos/<folder>/<file>` (the photo library) or `/brand/<file>` (logo and shared brand files).
 
 ### Images
 ```html
-<img data-el="Photo" src="assets/photo.jpg" alt="What the photo shows" style="position: absolute; left: 0px; top: 0px; width: 1080px; height: 1350px; object-fit: cover; object-position: 50% 40%;">
+<img data-el="Photo" src="/photos/my-post/photo.jpg" alt="What the photo shows" style="position: absolute; left: 0px; top: 0px; width: 1080px; height: 1350px; object-fit: cover; object-position: 50% 40%;">
 ```
 - Always give an explicit `width` and `height`. Use `object-fit: cover` to fill a frame. `object-position` is the focus point, which the user can move with sliders.
 - Optional adjustments the user can tweak with sliders: `filter: brightness(110%) contrast(110%) saturate(120%) sepia(15%) hue-rotate(0deg) grayscale(0%) blur(0px);`. Include only the ones you change.

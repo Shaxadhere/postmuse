@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Checks the brand kit's fonts and the posts' HTML against the Atelier post format, without a browser.
 // Usage: npm run check            (brand + every post)
-//        npm run check -- <slug>  (brand + one post)
+//        npm run check -- <slug>  (brand + one post; a post in a folder is <folder>/<slug>)
 import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -87,8 +87,8 @@ async function checkPost(slug, families) {
       const src = a.src || '';
       if (!src) err(label, 'image has no src');
       else if (src.startsWith('assets/') && !(await exists(path.join(dir, src)))) err(label, `${src} not found in posts/${slug}/`);
-      else if ((src.startsWith('/brand/') || src.startsWith('/photos/')) && !(await exists(path.join(ROOT, src)))) err(label, `${src} not found`);
-      else if (!/^(assets|\/brand|\/photos)\//.test(src)) err(label, `src must be /photos/…, /brand/… or assets/…, got ${src}`);
+      else if (src.startsWith('/brand/') && !(await exists(path.join(ROOT, src)))) err(label, `${src} not found`);
+      else if (!src.startsWith('assets/') && !src.startsWith('/brand/')) err(label, `src must be assets/… or /brand/…, got ${src}`);
       if (!st.width || !st.height) warn(label, 'give images an explicit width and height');
       if (!('alt' in a)) warn(label, 'add alt text');
     }
@@ -118,7 +118,17 @@ async function checkPost(slug, families) {
 
 const { families } = await checkBrand();
 const only = process.argv[2];
-const slugs = only ? [only] : (await readdir(path.join(ROOT, 'posts'), { withFileTypes: true })).filter((d) => d.isDirectory()).map((d) => d.name);
+// Posts sit in posts/<slug>/ or, one level down, in a folder: posts/<folder>/<slug>/.
+async function findPosts() {
+  const out = [];
+  const dirs = async (rel) => (await readdir(path.join(ROOT, 'posts', rel), { withFileTypes: true })).filter((d) => d.isDirectory() && !d.name.startsWith('.')).map((d) => d.name);
+  for (const name of await dirs('')) {
+    if (await exists(path.join(ROOT, 'posts', name, 'post.html'))) out.push(name);
+    else for (const sub of await dirs(name)) if (await exists(path.join(ROOT, 'posts', name, sub, 'post.html'))) out.push(`${name}/${sub}`);
+  }
+  return out;
+}
+const slugs = only ? [only] : await findPosts();
 for (const slug of slugs) await checkPost(slug, families);
 console.log(`\n${errors} error(s), ${warnings} warning(s)`);
 console.log('Note: this does not measure rendered text. Open the post in Atelier to check for overflow and overlaps.');

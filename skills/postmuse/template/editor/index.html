@@ -11,7 +11,6 @@
 <body>
   <header class="bar">
     <a class="brand" href="/"><span class="mark" aria-hidden="true">A</span><span>Atelier</span><span id="brandName" class="brand-name"></span></a>
-    <nav class="bar-nav" id="homeNav" hidden><a id="navPosts" href="/">Posts</a><a id="navPhotos" href="/?photos">Photos</a></nav>
     <div class="bar-tools" id="editTools" hidden>
       <select id="postPicker" aria-label="Post"></select>
       <span class="sep"></span>
@@ -49,27 +48,17 @@
       </form>
     </div>
     <p id="brandBanner" class="banner" hidden>No brand kit yet. Ask Claude: <b>“Postmuse, set up my brand kit”</b> and share your logo, colors and fonts.</p>
-    <div id="postGrid" class="grid"></div>
-  </main>
-
-  <main id="photos" class="home" hidden>
-    <div class="home-head">
-      <div>
-        <h1>Photos</h1>
-        <p class="hint">One library for every post. Drag a photo onto a folder to move it. A photo a post still uses can’t be deleted.</p>
-      </div>
-      <form id="newFolder" class="new-post">
-        <input id="folderName" type="text" placeholder="New folder name" aria-label="New folder name">
-        <button type="submit">New folder</button>
-        <button id="uploadPhotos" class="primary" type="button">Upload photos</button>
-      </form>
-    </div>
-    <p id="legacyBanner" class="banner" hidden></p>
     <div class="library">
-      <aside class="folders"><ol id="folderList"></ol></aside>
+      <aside class="folders">
+        <ol id="folderList"></ol>
+        <form id="newFolder" class="new-folder">
+          <input id="folderName" type="text" placeholder="New folder" aria-label="New folder name">
+          <button type="submit">Add</button>
+        </form>
+      </aside>
       <section>
         <div class="folder-head"><h2 id="folderTitle"></h2><span id="folderActions" class="row"></span></div>
-        <div id="photoGrid" class="photo-grid"></div>
+        <div id="postGrid" class="grid"></div>
       </section>
     </div>
   </main>
@@ -92,18 +81,7 @@
     <aside id="panel" class="panel"></aside>
   </main>
 
-  <dialog id="picker" class="picker">
-    <div class="picker-head">
-      <h2>Photos</h2>
-      <select id="pickerFolder" aria-label="Folder"></select>
-      <button id="pickerUpload" class="primary">Upload…</button>
-      <button id="pickerClose">Close</button>
-    </div>
-    <div id="pickerGrid" class="photo-grid"></div>
-  </dialog>
-
   <input id="fileInput" type="file" accept="image/*" hidden>
-  <input id="photoInput" type="file" accept="image/*" multiple hidden>
   <script src="/vendor/html-to-image/html-to-image.js"></script>
   <script type="module" src="/editor/editor.js"></script>
 </body>

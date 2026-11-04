@@ -48,16 +48,16 @@ If the user has said "just go" or you can't reach them, build anyway. Use a **ph
 1. **Read the brief.** It might be an idea in words, an inspo image to redesign, the user's photos to build around, or a change to an existing post. Default size is Instagram portrait 1080×1350. Use 1080×1080 for square, 1080×1920 for a story or reel cover, and 1200×675 for X or LinkedIn landscape. If the brief is clear, build it and state your assumptions in one line. Don't stop to ask.
 2. **Plan, briefly and in your head.** Decide on one idea, one focal point, a headline of 3–8 words, and at most 2–3 supporting elements. Follow `reference/design-guide.md`.
 3. **Prepare photos** (section 4).
-4. **Write** `posts/<slug>/post.json` and `posts/<slug>/post.html`, following `reference/post-format.md` exactly. Slugs are lowercase words joined by hyphens.
+4. **Write** `posts/<slug>/post.json` and `posts/<slug>/post.html`, following `reference/post-format.md` exactly. Slugs are lowercase words joined by hyphens. If the user asks for the post to go in one of their folders (or the posts it belongs with are in one), write it to `posts/<folder>/<slug>/` instead; its id is then `<folder>/<slug>`, and you use that id wherever these steps say `<slug>`.
 5. **Variations:** when the user asks for options, or the brief is open, make 2–3 posts with different slugs (`-a`, `-b`, `-c`). Vary the layout and the headline, not just the color.
 6. **Carousels:** one post per slide (`<slug>-1`, `<slug>-2`, …), all the same size, sharing one design system.
 
 ## 4. Edit photos
-The user's photos go into the studio's photo library, `photos/<folder>/`, and posts use them as `src="/photos/<folder>/<file>"`. Use the post's slug as the folder (`photos/<slug>/`) unless the user has already organized their photos into folders; then use theirs, and reuse a photo that's already in the library instead of copying it. Name files in lowercase with hyphens (`cold-brew-hero.jpg`). The user manages the library on Atelier's **Photos** page. Never edit the originals in place.
+The user's photos go into `posts/<slug>/assets/`. Never edit the originals in place.
 
 - **Crop, reframe, resize and strong styles:** use the bundled script, which writes a new file. Crop to the **size of the photo's slot** in your layout, not always the full post. A photo above a 470px text band in a 1080×1350 post is 1080×880:
   ```bash
-  npm run photo -- <in> photos/<slug>/<name>.jpg --size 1080x880 --focus 50,35
+  npm run photo -- <in> posts/<slug>/assets/<name>.jpg --size 1080x880 --focus 50,35
   ```
   Other options: `--zoom`, `--contain --pad-color`, `--rotate`, `--flip`, `--grayscale`, `--duotone A,B`, `--tint HEX`, `--blur`, `--sharpen`, `--vignette`, `--round`, plus color controls. Run `npm run photo -- --help` for the full list. Set `--focus` to where the subject is (faces, product) so the crop keeps it.
 - **Avoid big enlargements.** If the source is much smaller than the slot (more than about 1.3× upscaling), pick a layout with a smaller photo slot, or add `--sharpen` and tell the user it may look soft.
@@ -78,4 +78,4 @@ Reply with:
 - how to finish it: `cd <studio>` → `npm start` → open `http://localhost:4747/?post=<slug>`. Mention that edits persist only after **Save**, and that **Export PNG** downloads the final image.
 
 ## Changing a post later
-The user may have edited and saved the post in Atelier. Always re-read `posts/<slug>/post.html` before changing it. Change only what was asked, and keep their positions, wording and photos everywhere else.
+The user may have edited and saved the post in Atelier, moved it into a folder, or deleted it. Find it first: it's at `posts/<slug>/` or `posts/<folder>/<slug>/` (`ls posts posts/*/` shows both). Always re-read its `post.html` before changing it. Change only what was asked, and keep their positions, wording and photos everywhere else.

@@ -296,7 +296,6 @@ document.addEventListener('paste', (e) => {
 // ---------- keyboard ----------
 document.addEventListener('keydown', (e) => {
   const mod = e.metaKey || e.ctrlKey;
-  if (!slug || $('picker').open) return;
   if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); save(); return; }
   if (editingText) {
     if (e.key === 'Escape') { e.preventDefault(); editingText.blur(); }
@@ -372,63 +371,25 @@ function addShape() {
   commit(); select(el);
 }
 
-// Uploads go to the shared photo library (photos/<folder>/), by default a folder named after the post.
-async function uploadImage(file, folder = slug) {
-  if (slug) setStatus('Uploading…');
-  const res = await fetch(`/api/photos?folder=${encodeURIComponent(folder)}&name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file });
+async function uploadImage(file) {
+  setStatus('Uploading…');
+  const res = await fetch(`/api/posts/${encodeURIComponent(slug)}/assets?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file });
   const data = await res.json();
-  if (!res.ok) { alert(data.error || 'Upload failed'); if (slug) updateDirty(); return null; }
-  return data.src;
+  if (!res.ok) { alert(data.error || 'Upload failed'); updateDirty(); return null; }
+  return assetBase() + data.src.slice('assets/'.length);
 }
-const folderLabel = (name) => name || 'Unsorted';
-const fetchLibrary = async () => (await (await fetch('/api/photos')).json()).folders;
-
-// "+ Image" and "Replace image…" open a picker over the library; Upload… adds a new file to the folder shown.
 let pickMode = 'add';
-let pickerFolders = [];
-async function pickImage(mode) {
-  pickMode = mode;
-  pickerFolders = await fetchLibrary();
-  const sel = $('pickerFolder');
-  const names = pickerFolders.map((f) => f.name);
-  if (!names.includes(slug)) names.push(slug);
-  sel.innerHTML = '';
-  for (const n of names) sel.append(new Option(n === slug ? `${n} (this post)` : folderLabel(n), n));
-  if (!names.includes(sel.dataset.last)) sel.dataset.last = slug;
-  sel.value = sel.dataset.last;
-  renderPicker();
-  $('picker').showModal();
-}
-function renderPicker() {
-  const grid = $('pickerGrid');
-  const photos = pickerFolders.find((f) => f.name === $('pickerFolder').value)?.photos || [];
-  grid.innerHTML = photos.length ? '' : '<p class="hint">No photos in this folder yet. Upload one, or pick another folder.</p>';
-  for (const p of photos) {
-    const b = document.createElement('button');
-    b.title = p.name;
-    const img = new Image(); img.src = p.src; img.alt = p.name; img.loading = 'lazy';
-    b.append(img);
-    b.onclick = () => { $('picker').close(); useImage(p.src); };
-    grid.append(b);
-  }
-}
-$('pickerFolder').addEventListener('change', () => { $('pickerFolder').dataset.last = $('pickerFolder').value; renderPicker(); });
-$('pickerClose').addEventListener('click', () => $('picker').close());
-$('pickerUpload').addEventListener('click', () => { $('fileInput').value = ''; $('fileInput').click(); });
+function pickImage(mode) { pickMode = mode; $('fileInput').value = ''; $('fileInput').click(); }
 $('fileInput').addEventListener('change', async () => {
   const file = $('fileInput').files[0];
   if (!file) return;
-  const src = await uploadImage(file, $('pickerFolder').value || slug);
+  const src = await uploadImage(file);
   if (!src) return;
-  $('picker').close();
-  useImage(src);
-});
-function useImage(src) {
   if (pickMode === 'replace' && isImage(selected)) {
     selected.src = src;
     selected.addEventListener('load', () => { updateSelBox(); commit(); }, { once: true });
   } else addImage(src);
-}
+});
 function addImage(src) {
   const img = document.createElement('img');
   img.dataset.el = uniqueName('Image');
@@ -612,13 +573,10 @@ async function save() {
   if (!post) return;
   const html = serialize();
   setStatus('Saving…');
-  const res = await fetch(`/api/posts/${slug}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ html }) });
+  const res = await fetch(`/api/posts/${encodeURIComponent(slug)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ html }) });
   if (!res.ok) { setStatus('Save failed', true); return; }
-  const data = await res.json();
-  // The server sends the post back when it pointed old photo paths at photos moved since this page opened.
-  if (data.html) { restore(data.html); savedHtml = current = serialize(); } else savedHtml = current = html;
+  savedHtml = current = html;
   updateDirty();
-  if (data.html) setStatus('Saved · photo paths updated');
 }
 
 async function exportPng() {
@@ -630,7 +588,7 @@ async function exportPng() {
     const fontEmbedCSS = await htmlToImage.getFontEmbedCSS(post);
     const url = await htmlToImage.toPng(post, { width: W, height: H, pixelRatio: 1, fontEmbedCSS });
     const a = document.createElement('a');
-    a.href = url; a.download = `${slug}.png`; a.click();
+    a.href = url; a.download = `${slug.split('/').pop()}.png`; a.click();
     updateDirty();
   } catch (err) {
     console.error(err);
@@ -640,34 +598,95 @@ async function exportPng() {
 }
 
 // ---------- pages ----------
-function showNav(active) {
-  $('homeNav').hidden = false;
-  $('navPosts').classList.toggle('active', active === 'posts');
-  $('navPhotos').classList.toggle('active', active === 'photos');
+// The home page: folders on the left ("All posts" first), the open folder's posts on the right.
+let homePosts = [];
+let homeFolders = [];
+let openFolder = params.get('folder') || '';
+let draggingPost = null;
+const thumbHtml = new Map(); // post id → post.html, so re-renders after a move don't refetch
+
+async function homeApi(method, url, body) {
+  const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { alert(data.error || 'Something went wrong'); return null; }
+  return data;
 }
 
 async function showHome() {
   $('home').hidden = false;
-  showNav('posts');
   await loadBrand();
   $('brandBanner').hidden = !!brandKit.name;
   $('newPost').onsubmit = async (e) => {
     e.preventDefault();
     const [w, h] = $('newSize').value.split('x').map(Number);
-    const res = await fetch('/api/posts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: $('newTitle').value.trim() || 'Untitled post', w, h }) });
-    const { slug: created } = await res.json();
-    location.href = `/?post=${created}`;
+    const data = await homeApi('POST', '/api/posts', { title: $('newTitle').value.trim() || 'Untitled post', w, h, folder: openFolder });
+    if (data) location.href = `/?post=${data.slug}`;
   };
-  const posts = await (await fetch('/api/posts')).json();
+  $('newFolder').onsubmit = async (e) => {
+    e.preventDefault();
+    const name = $('folderName').value.trim();
+    if (!name) { $('folderName').focus(); return; }
+    const data = await homeApi('POST', '/api/folders', { name });
+    if (!data) return;
+    $('folderName').value = '';
+    openFolder = data.name;
+    refreshHome();
+  };
+  await refreshHome();
+}
+
+async function refreshHome() {
+  [homePosts, homeFolders] = await Promise.all([
+    fetch('/api/posts').then((r) => r.json()),
+    fetch('/api/folders').then((r) => r.json()),
+  ]);
+  if (!homeFolders.includes(openFolder)) openFolder = '';
+  window.history.replaceState(null, '', openFolder ? `/?folder=${openFolder}` : '/');
+  renderFolders();
+  await renderPostGrid();
+}
+
+function renderFolders() {
+  const list = $('folderList');
+  list.innerHTML = '';
+  for (const name of ['', ...homeFolders]) {
+    const li = document.createElement('li');
+    li.innerHTML = '<span></span><small></small>';
+    li.firstChild.textContent = name || 'All posts';
+    li.lastChild.textContent = name ? homePosts.filter((p) => p.folder === name).length : homePosts.length;
+    li.classList.toggle('active', name === openFolder);
+    li.onclick = () => { openFolder = name; refreshHome(); };
+    // Drop a post card here to move it; dropping on "All posts" takes it out of its folder.
+    li.ondragover = (e) => { if (draggingPost) { e.preventDefault(); li.classList.add('drop'); } };
+    li.ondragleave = () => li.classList.remove('drop');
+    li.ondrop = (e) => { e.preventDefault(); li.classList.remove('drop'); if (draggingPost) movePost(draggingPost, name); };
+    list.append(li);
+  }
+}
+
+async function renderPostGrid() {
+  $('folderTitle').textContent = openFolder || 'All posts';
+  const actions = $('folderActions');
+  actions.innerHTML = '';
+  if (openFolder) actions.append(button('Rename folder', renameFolder), button('Delete folder', deleteFolder, 'danger'));
+  const posts = openFolder ? homePosts.filter((p) => p.folder === openFolder) : homePosts;
   const grid = $('postGrid');
-  grid.innerHTML = posts.length ? '' : '<p class="hint">No posts yet. Ask Claude for one, or start a blank post above.</p>';
+  grid.innerHTML = posts.length ? '' : openFolder
+    ? '<p class="hint">This folder is empty. Drag posts onto it, use a post’s “Move to…” menu, or start a blank post while the folder is open.</p>'
+    : '<p class="hint">No posts yet. Ask Claude for one, or start a blank post above.</p>';
   for (const p of posts) {
-    const { html } = await (await fetch(`/api/posts/${p.slug}`)).json();
-    const card = document.createElement('a');
-    card.className = 'card'; card.href = `/?post=${p.slug}`;
+    if (!thumbHtml.has(p.id)) thumbHtml.set(p.id, (await (await fetch(`/api/posts/${encodeURIComponent(p.id)}`)).json()).html);
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.draggable = true;
+    card.ondragstart = (e) => { draggingPost = p.id; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', p.id); };
+    card.ondragend = () => { draggingPost = null; };
+    const link = document.createElement('a');
+    link.href = `/?post=${p.id}`;
+    link.draggable = false;
     const thumb = document.createElement('div'); thumb.className = 'thumb';
     const inner = document.createElement('div');
-    inner.innerHTML = html.split('"assets/').join(`"/posts/${p.slug}/assets/`).replace(/url\((['"]?)assets\//g, `url($1/posts/${p.slug}/assets/`);
+    inner.innerHTML = thumbHtml.get(p.id).split('"assets/').join(`"/posts/${p.id}/assets/`).replace(/url\((['"]?)assets\//g, `url($1/posts/${p.id}/assets/`);
     const root = inner.querySelector('[data-post]');
     const w = num(root?.dataset.w, 1080), h = num(root?.dataset.h, 1350), k = 240 / w;
     inner.style.transform = `scale(${k})`;
@@ -676,12 +695,53 @@ async function showHome() {
     const meta = document.createElement('div'); meta.className = 'meta';
     meta.innerHTML = '<b></b><span></span>';
     meta.querySelector('b').textContent = p.title;
-    meta.querySelector('span').textContent = new Date(p.updated).toLocaleString();
-    card.append(thumb, meta);
+    meta.querySelector('span').textContent = (!openFolder && p.folder ? `${p.folder} · ` : '') + new Date(p.updated).toLocaleString();
+    link.append(thumb, meta);
+    const move = document.createElement('select');
+    move.setAttribute('aria-label', `Move ${p.title}`);
+    move.append(new Option('Move to…', ''));
+    if (p.folder) move.append(new Option('No folder', '/'));
+    for (const f of homeFolders) if (f !== p.folder) move.append(new Option(f, f));
+    move.onchange = () => movePost(p.id, move.value === '/' ? '' : move.value);
+    const row = document.createElement('div'); row.className = 'card-actions';
+    row.append(move, button('Delete', () => deletePost(p), 'danger'));
+    card.append(link, row);
     grid.append(card);
     root?.querySelectorAll('svg[data-curve]').forEach(layoutCurve);
   }
   grid.style.gridTemplateColumns = 'repeat(auto-fill, 240px)';
+}
+
+async function movePost(id, folder) {
+  if (folder === (id.includes('/') ? id.split('/')[0] : '')) return;
+  const data = await homeApi('POST', `/api/posts/${encodeURIComponent(id)}/move`, { folder });
+  if (!data) return;
+  thumbHtml.set(data.slug, thumbHtml.get(id));
+  refreshHome();
+}
+
+async function deletePost(p) {
+  if (!confirm(`Delete “${p.title}”? Its post.html and photos in posts/${p.id}/ are removed for good.`)) return;
+  if (await homeApi('DELETE', `/api/posts/${encodeURIComponent(p.id)}`)) refreshHome();
+}
+
+async function renameFolder() {
+  const to = prompt('Rename folder', openFolder);
+  if (!to || to.trim() === openFolder) return;
+  const data = await homeApi('PUT', '/api/folders', { from: openFolder, to: to.trim() });
+  if (!data) return;
+  thumbHtml.clear();
+  openFolder = data.name;
+  refreshHome();
+}
+
+async function deleteFolder() {
+  const n = homePosts.filter((p) => p.folder === openFolder).length;
+  if (!confirm(n ? `Delete the folder “${openFolder}”? Its ${n} post${n > 1 ? 's' : ''} move${n > 1 ? '' : 's'} out of it and aren’t deleted.` : `Delete the empty folder “${openFolder}”?`)) return;
+  if (!(await homeApi('DELETE', `/api/folders?name=${encodeURIComponent(openFolder)}`))) return;
+  thumbHtml.clear();
+  openFolder = '';
+  refreshHome();
 }
 
 async function showEditor() {
@@ -689,7 +749,7 @@ async function showEditor() {
   $('editTools').hidden = false;
   await loadBrand();
   renderPanel();
-  const res = await fetch(`/api/posts/${slug}`);
+  const res = await fetch(`/api/posts/${encodeURIComponent(slug)}`);
   if (!res.ok) { $('stage').innerHTML = `<p style="padding:40px">No post called “${slug}”.</p>`; return; }
   const { html, meta } = await res.json();
   document.title = `${meta.title || slug} · Atelier`;
@@ -701,9 +761,10 @@ async function showEditor() {
 
   const posts = await (await fetch('/api/posts')).json();
   const picker = $('postPicker');
-  for (const p of posts) { const o = document.createElement('option'); o.value = p.slug; o.textContent = p.title; picker.append(o); }
+  for (const p of posts) { const o = document.createElement('option'); o.value = p.id; o.textContent = p.folder ? `${p.folder} / ${p.title}` : p.title; picker.append(o); }
   picker.value = slug;
   picker.onchange = () => { location.href = `/?post=${picker.value}`; };
+  if (slug.includes('/')) document.querySelector('.brand').href = `/?folder=${slug.split('/')[0]}`;
 
   $('save').onclick = save;
   $('export').onclick = exportPng;
@@ -718,152 +779,4 @@ async function showEditor() {
   window.addEventListener('beforeunload', (e) => { if (current !== savedHtml) e.preventDefault(); });
 }
 
-// ---------- photos page: the shared library in photos/, one level of folders ----------
-let library = [];
-let openFolder = '';
-let draggingPhoto = null;
-
-async function photoApi(method, url, body) {
-  const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) { alert(data.error || 'Something went wrong'); return null; }
-  return data;
-}
-
-async function showPhotos() {
-  $('photos').hidden = false;
-  showNav('photos');
-  document.title = 'Photos · Atelier';
-  await loadBrand();
-  $('newFolder').onsubmit = async (e) => {
-    e.preventDefault();
-    const name = $('folderName').value.trim();
-    if (!name) { $('folderName').focus(); return; }
-    const data = await photoApi('POST', '/api/photos/folders', { name });
-    if (!data) return;
-    $('folderName').value = '';
-    openFolder = data.name;
-    refreshPhotos();
-  };
-  $('uploadPhotos').onclick = () => { $('photoInput').value = ''; $('photoInput').click(); };
-  $('photoInput').onchange = () => uploadPhotos([...$('photoInput').files]);
-  // Dropping files from the desktop onto the grid uploads them into the open folder.
-  const grid = $('photoGrid');
-  grid.ondragover = (e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); grid.classList.add('drop'); } };
-  grid.ondragleave = () => grid.classList.remove('drop');
-  grid.ondrop = (e) => { e.preventDefault(); grid.classList.remove('drop'); if (e.dataTransfer.files.length) uploadPhotos([...e.dataTransfer.files]); };
-  await refreshPhotos();
-}
-
-async function refreshPhotos() {
-  const data = await (await fetch('/api/photos')).json();
-  library = data.folders;
-  renderLegacy(data.legacy);
-  if (!library.some((f) => f.name === openFolder)) openFolder = '';
-  renderFolders();
-  renderPhotoGrid();
-}
-
-async function uploadPhotos(files) {
-  for (const file of files.filter((f) => f.type.startsWith('image/'))) await uploadImage(file, openFolder);
-  refreshPhotos();
-}
-
-// Posts made before the library keep photos in posts/<slug>/assets/; offer to move them into photos/<slug>/.
-function renderLegacy(legacy) {
-  const banner = $('legacyBanner');
-  banner.hidden = !legacy.length;
-  if (!legacy.length) return;
-  const count = legacy.reduce((n, p) => n + p.count, 0);
-  banner.textContent = `${count} photo${count > 1 ? 's are' : ' is'} still stored inside ${legacy.length > 1 ? 'posts' : 'a post'} (${legacy.map((p) => `“${p.title}”`).join(', ')}), so ${count > 1 ? 'they don’t' : 'it doesn’t'} show here. `;
-  banner.append(button('Move into the library', async () => {
-    const data = await photoApi('POST', '/api/photos/import');
-    if (data) refreshPhotos();
-  }, 'primary'));
-}
-
-function renderFolders() {
-  const list = $('folderList');
-  list.innerHTML = '';
-  for (const f of library) {
-    const li = document.createElement('li');
-    li.innerHTML = '<span></span><small></small>';
-    li.firstChild.textContent = folderLabel(f.name);
-    li.lastChild.textContent = f.photos.length;
-    li.classList.toggle('active', f.name === openFolder);
-    li.onclick = () => { openFolder = f.name; renderFolders(); renderPhotoGrid(); };
-    li.ondragover = (e) => { if (draggingPhoto) { e.preventDefault(); li.classList.add('drop'); } };
-    li.ondragleave = () => li.classList.remove('drop');
-    li.ondrop = (e) => { e.preventDefault(); li.classList.remove('drop'); if (draggingPhoto) movePhoto(draggingPhoto, f.name); };
-    list.append(li);
-  }
-}
-
-function renderPhotoGrid() {
-  const folder = library.find((f) => f.name === openFolder);
-  $('folderTitle').textContent = folderLabel(openFolder);
-  const actions = $('folderActions');
-  actions.innerHTML = '';
-  if (openFolder) actions.append(button('Rename', renameFolder), button('Delete folder', deleteFolder, 'danger'));
-  const grid = $('photoGrid');
-  grid.innerHTML = folder.photos.length ? '' : '<p class="hint">No photos here. Upload some, drop image files here, or drag photos onto this folder.</p>';
-  for (const p of folder.photos) {
-    const tile = document.createElement('figure');
-    tile.className = 'photo';
-    tile.draggable = true;
-    tile.ondragstart = (e) => { draggingPhoto = p.path; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', p.path); };
-    tile.ondragend = () => { draggingPhoto = null; };
-    const img = new Image(); img.src = p.src; img.alt = p.name; img.loading = 'lazy';
-    const cap = document.createElement('figcaption');
-    const name = document.createElement('b'); name.textContent = p.name; name.title = p.src;
-    const used = document.createElement('span');
-    used.className = p.usedBy.length ? 'used' : 'unused';
-    used.textContent = p.usedBy.length ? `Used in ${p.usedBy.map((u) => u.title).join(', ')}` : 'Not used in any post';
-    const move = document.createElement('select');
-    move.setAttribute('aria-label', `Move ${p.name}`);
-    move.append(new Option('Move to…', ''));
-    for (const f of library) if (f.name !== openFolder) move.append(new Option(folderLabel(f.name), f.name || '/'));
-    move.onchange = () => movePhoto(p.path, move.value === '/' ? '' : move.value);
-    const row = document.createElement('div'); row.className = 'row';
-    row.append(move, button('Delete', () => deletePhoto(p), 'danger'));
-    cap.append(name, used, row);
-    tile.append(img, cap);
-    grid.append(tile);
-  }
-}
-
-async function movePhoto(rel, folder) {
-  if (await photoApi('POST', '/api/photos/move', { path: rel, folder })) refreshPhotos();
-}
-
-async function deletePhoto(p) {
-  if (p.usedBy.length) {
-    alert(`Can’t delete “${p.name}”: it’s used in ${p.usedBy.map((u) => `“${u.title}”`).join(', ')}. Remove it from ${p.usedBy.length > 1 ? 'those posts' : 'that post'} in the editor and save, then delete it here.`);
-    return;
-  }
-  if (!confirm(`Delete “${p.name}”? This can’t be undone.`)) return;
-  if (await photoApi('DELETE', `/api/photos?path=${encodeURIComponent(p.path)}`)) refreshPhotos();
-}
-
-async function renameFolder() {
-  const to = prompt('Rename folder', openFolder);
-  if (!to || to.trim() === openFolder) return;
-  const data = await photoApi('PUT', '/api/photos/folders', { from: openFolder, to: to.trim() });
-  if (!data) return;
-  openFolder = data.name;
-  refreshPhotos();
-}
-
-async function deleteFolder() {
-  const folder = library.find((f) => f.name === openFolder);
-  const used = folder.photos.filter((p) => p.usedBy.length);
-  if (used.length) {
-    alert(`Can’t delete “${openFolder}”: ${used.length} of its photos ${used.length > 1 ? 'are' : 'is'} still used in posts. Move ${used.length > 1 ? 'them' : 'it'} to another folder first, or remove ${used.length > 1 ? 'them' : 'it'} from the posts.`);
-    return;
-  }
-  const n = folder.photos.length;
-  if (!confirm(n ? `Delete the folder “${openFolder}” and its ${n} photo${n > 1 ? 's' : ''}? This can’t be undone.` : `Delete the empty folder “${openFolder}”?`)) return;
-  if (await photoApi('DELETE', `/api/photos/folders?name=${encodeURIComponent(openFolder)}`)) { openFolder = ''; refreshPhotos(); }
-}
-
-slug ? showEditor() : params.has('photos') ? showPhotos() : showHome();
+slug ? showEditor() : showHome();

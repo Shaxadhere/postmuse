@@ -12,7 +12,7 @@ photos/
   <file>.jpg    photos directly in photos/ show as "Unsorted"
 ```
 
-The user browses this library on Atelier's **Photos** page, where they create, rename and delete folders, move photos between them and delete unused photos. Atelier refuses to delete a photo that any `post.html` still references. When a photo is moved or a folder renamed, Atelier rewrites the `/photos/…` paths in saved posts, so always re-read `post.html` before editing it. Older posts may still use a per-post `posts/<slug>/assets/` folder; that keeps working, but put new photos in `photos/`.
+The user browses this library on Atelier's **Photos** page, where they create, rename and delete folders, move photos between them and delete unused photos. Atelier refuses to delete a photo that any `post.html` still references. When a photo is moved or a folder renamed, Atelier rewrites the `/photos/…` paths in saved posts, so always re-read `post.html` before editing it. Older posts may still use a per-post `posts/<slug>/assets/` folder. That keeps working, and the Photos page offers to move those photos into `photos/<slug>/`. Put new photos in `photos/`.
 
 ## post.html
 `post.html` holds **one root element and nothing else**: no `<html>`, `<head>`, `<style>`, `<script>` or comments outside the root.

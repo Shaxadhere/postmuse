@@ -30,7 +30,9 @@ Every post draws from one photo library in `photos/`. Open **Photos** in the top
 - **Clean up:** delete photos you don't need, or a whole folder. A photo a post still uses can't be deleted; remove it from the post in the editor and save first.
 - **Upload:** **Upload photos**, or drop image files onto the grid.
 
-Moving a photo or renaming a folder updates the saved posts that use it. Save any open post first, so an older copy doesn't overwrite the update.
+Moving a photo or renaming a folder updates the saved posts that use it. If that post is open in the editor, saving it keeps the new paths.
+
+Posts made before the library kept their photos in `posts/<slug>/assets/`. The Photos page lists those posts and offers **Move into the library**, which moves the photos to `photos/<slug>/` and updates the posts.
 
 Changes are written to `posts/<slug>/post.html` when you **Save**, and Claude reads them back next time.
 

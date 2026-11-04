@@ -87,8 +87,8 @@ async function checkPost(slug, families) {
       const src = a.src || '';
       if (!src) err(label, 'image has no src');
       else if (src.startsWith('assets/') && !(await exists(path.join(dir, src)))) err(label, `${src} not found in posts/${slug}/`);
-      else if (src.startsWith('/brand/') && !(await exists(path.join(ROOT, src)))) err(label, `${src} not found`);
-      else if (!src.startsWith('assets/') && !src.startsWith('/brand/')) err(label, `src must be assets/… or /brand/…, got ${src}`);
+      else if ((src.startsWith('/brand/') || src.startsWith('/photos/')) && !(await exists(path.join(ROOT, src)))) err(label, `${src} not found`);
+      else if (!/^(assets|\/brand|\/photos)\//.test(src)) err(label, `src must be /photos/…, /brand/… or assets/…, got ${src}`);
       if (!st.width || !st.height) warn(label, 'give images an explicit width and height');
       if (!('alt' in a)) warn(label, 'add alt text');
     }

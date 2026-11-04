@@ -296,6 +296,7 @@ document.addEventListener('paste', (e) => {
 // ---------- keyboard ----------
 document.addEventListener('keydown', (e) => {
   const mod = e.metaKey || e.ctrlKey;
+  if (!slug || $('picker').open) return;
   if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); save(); return; }
   if (editingText) {
     if (e.key === 'Escape') { e.preventDefault(); editingText.blur(); }
@@ -371,25 +372,63 @@ function addShape() {
   commit(); select(el);
 }
 
-async function uploadImage(file) {
-  setStatus('Uploading…');
-  const res = await fetch(`/api/posts/${slug}/assets?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file });
+// Uploads go to the shared photo library (photos/<folder>/), by default a folder named after the post.
+async function uploadImage(file, folder = slug) {
+  if (slug) setStatus('Uploading…');
+  const res = await fetch(`/api/photos?folder=${encodeURIComponent(folder)}&name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file });
   const data = await res.json();
-  if (!res.ok) { alert(data.error || 'Upload failed'); updateDirty(); return null; }
-  return assetBase() + data.src.slice('assets/'.length);
+  if (!res.ok) { alert(data.error || 'Upload failed'); if (slug) updateDirty(); return null; }
+  return data.src;
 }
+const folderLabel = (name) => name || 'Unsorted';
+const fetchLibrary = async () => (await (await fetch('/api/photos')).json()).folders;
+
+// "+ Image" and "Replace image…" open a picker over the library; Upload… adds a new file to the folder shown.
 let pickMode = 'add';
-function pickImage(mode) { pickMode = mode; $('fileInput').value = ''; $('fileInput').click(); }
+let pickerFolders = [];
+async function pickImage(mode) {
+  pickMode = mode;
+  pickerFolders = await fetchLibrary();
+  const sel = $('pickerFolder');
+  const names = pickerFolders.map((f) => f.name);
+  if (!names.includes(slug)) names.push(slug);
+  sel.innerHTML = '';
+  for (const n of names) sel.append(new Option(n === slug ? `${n} (this post)` : folderLabel(n), n));
+  if (!names.includes(sel.dataset.last)) sel.dataset.last = slug;
+  sel.value = sel.dataset.last;
+  renderPicker();
+  $('picker').showModal();
+}
+function renderPicker() {
+  const grid = $('pickerGrid');
+  const photos = pickerFolders.find((f) => f.name === $('pickerFolder').value)?.photos || [];
+  grid.innerHTML = photos.length ? '' : '<p class="hint">No photos in this folder yet. Upload one, or pick another folder.</p>';
+  for (const p of photos) {
+    const b = document.createElement('button');
+    b.title = p.name;
+    const img = new Image(); img.src = p.src; img.alt = p.name; img.loading = 'lazy';
+    b.append(img);
+    b.onclick = () => { $('picker').close(); useImage(p.src); };
+    grid.append(b);
+  }
+}
+$('pickerFolder').addEventListener('change', () => { $('pickerFolder').dataset.last = $('pickerFolder').value; renderPicker(); });
+$('pickerClose').addEventListener('click', () => $('picker').close());
+$('pickerUpload').addEventListener('click', () => { $('fileInput').value = ''; $('fileInput').click(); });
 $('fileInput').addEventListener('change', async () => {
   const file = $('fileInput').files[0];
   if (!file) return;
-  const src = await uploadImage(file);
+  const src = await uploadImage(file, $('pickerFolder').value || slug);
   if (!src) return;
+  $('picker').close();
+  useImage(src);
+});
+function useImage(src) {
   if (pickMode === 'replace' && isImage(selected)) {
     selected.src = src;
     selected.addEventListener('load', () => { updateSelBox(); commit(); }, { once: true });
   } else addImage(src);
-});
+}
 function addImage(src) {
   const img = document.createElement('img');
   img.dataset.el = uniqueName('Image');
@@ -598,8 +637,15 @@ async function exportPng() {
 }
 
 // ---------- pages ----------
+function showNav(active) {
+  $('homeNav').hidden = false;
+  $('navPosts').classList.toggle('active', active === 'posts');
+  $('navPhotos').classList.toggle('active', active === 'photos');
+}
+
 async function showHome() {
   $('home').hidden = false;
+  showNav('posts');
   await loadBrand();
   $('brandBanner').hidden = !!brandKit.name;
   $('newPost').onsubmit = async (e) => {
@@ -669,4 +715,137 @@ async function showEditor() {
   window.addEventListener('beforeunload', (e) => { if (current !== savedHtml) e.preventDefault(); });
 }
 
-slug ? showEditor() : showHome();
+// ---------- photos page: the shared library in photos/, one level of folders ----------
+let library = [];
+let openFolder = '';
+let draggingPhoto = null;
+
+async function photoApi(method, url, body) {
+  const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { alert(data.error || 'Something went wrong'); return null; }
+  return data;
+}
+
+async function showPhotos() {
+  $('photos').hidden = false;
+  showNav('photos');
+  document.title = 'Photos · Atelier';
+  await loadBrand();
+  $('newFolder').onsubmit = async (e) => {
+    e.preventDefault();
+    const name = $('folderName').value.trim();
+    if (!name) { $('folderName').focus(); return; }
+    const data = await photoApi('POST', '/api/photos/folders', { name });
+    if (!data) return;
+    $('folderName').value = '';
+    openFolder = data.name;
+    refreshPhotos();
+  };
+  $('uploadPhotos').onclick = () => { $('photoInput').value = ''; $('photoInput').click(); };
+  $('photoInput').onchange = () => uploadPhotos([...$('photoInput').files]);
+  // Dropping files from the desktop onto the grid uploads them into the open folder.
+  const grid = $('photoGrid');
+  grid.ondragover = (e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); grid.classList.add('drop'); } };
+  grid.ondragleave = () => grid.classList.remove('drop');
+  grid.ondrop = (e) => { e.preventDefault(); grid.classList.remove('drop'); if (e.dataTransfer.files.length) uploadPhotos([...e.dataTransfer.files]); };
+  await refreshPhotos();
+}
+
+async function refreshPhotos() {
+  library = await fetchLibrary();
+  if (!library.some((f) => f.name === openFolder)) openFolder = '';
+  renderFolders();
+  renderPhotoGrid();
+}
+
+async function uploadPhotos(files) {
+  for (const file of files.filter((f) => f.type.startsWith('image/'))) await uploadImage(file, openFolder);
+  refreshPhotos();
+}
+
+function renderFolders() {
+  const list = $('folderList');
+  list.innerHTML = '';
+  for (const f of library) {
+    const li = document.createElement('li');
+    li.innerHTML = '<span></span><small></small>';
+    li.firstChild.textContent = folderLabel(f.name);
+    li.lastChild.textContent = f.photos.length;
+    li.classList.toggle('active', f.name === openFolder);
+    li.onclick = () => { openFolder = f.name; renderFolders(); renderPhotoGrid(); };
+    li.ondragover = (e) => { if (draggingPhoto) { e.preventDefault(); li.classList.add('drop'); } };
+    li.ondragleave = () => li.classList.remove('drop');
+    li.ondrop = (e) => { e.preventDefault(); li.classList.remove('drop'); if (draggingPhoto) movePhoto(draggingPhoto, f.name); };
+    list.append(li);
+  }
+}
+
+function renderPhotoGrid() {
+  const folder = library.find((f) => f.name === openFolder);
+  $('folderTitle').textContent = folderLabel(openFolder);
+  const actions = $('folderActions');
+  actions.innerHTML = '';
+  if (openFolder) actions.append(button('Rename', renameFolder), button('Delete folder', deleteFolder, 'danger'));
+  const grid = $('photoGrid');
+  grid.innerHTML = folder.photos.length ? '' : '<p class="hint">No photos here. Upload some, drop image files here, or drag photos onto this folder.</p>';
+  for (const p of folder.photos) {
+    const tile = document.createElement('figure');
+    tile.className = 'photo';
+    tile.draggable = true;
+    tile.ondragstart = (e) => { draggingPhoto = p.path; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', p.path); };
+    tile.ondragend = () => { draggingPhoto = null; };
+    const img = new Image(); img.src = p.src; img.alt = p.name; img.loading = 'lazy';
+    const cap = document.createElement('figcaption');
+    const name = document.createElement('b'); name.textContent = p.name; name.title = p.src;
+    const used = document.createElement('span');
+    used.className = p.usedBy.length ? 'used' : 'unused';
+    used.textContent = p.usedBy.length ? `Used in ${p.usedBy.map((u) => u.title).join(', ')}` : 'Not used in any post';
+    const move = document.createElement('select');
+    move.setAttribute('aria-label', `Move ${p.name}`);
+    move.append(new Option('Move to…', ''));
+    for (const f of library) if (f.name !== openFolder) move.append(new Option(folderLabel(f.name), f.name || '/'));
+    move.onchange = () => movePhoto(p.path, move.value === '/' ? '' : move.value);
+    const row = document.createElement('div'); row.className = 'row';
+    row.append(move, button('Delete', () => deletePhoto(p), 'danger'));
+    cap.append(name, used, row);
+    tile.append(img, cap);
+    grid.append(tile);
+  }
+}
+
+async function movePhoto(rel, folder) {
+  if (await photoApi('POST', '/api/photos/move', { path: rel, folder })) refreshPhotos();
+}
+
+async function deletePhoto(p) {
+  if (p.usedBy.length) {
+    alert(`Can’t delete “${p.name}”: it’s used in ${p.usedBy.map((u) => `“${u.title}”`).join(', ')}. Remove it from ${p.usedBy.length > 1 ? 'those posts' : 'that post'} in the editor and save, then delete it here.`);
+    return;
+  }
+  if (!confirm(`Delete “${p.name}”? This can’t be undone.`)) return;
+  if (await photoApi('DELETE', `/api/photos?path=${encodeURIComponent(p.path)}`)) refreshPhotos();
+}
+
+async function renameFolder() {
+  const to = prompt('Rename folder', openFolder);
+  if (!to || to.trim() === openFolder) return;
+  const data = await photoApi('PUT', '/api/photos/folders', { from: openFolder, to: to.trim() });
+  if (!data) return;
+  openFolder = data.name;
+  refreshPhotos();
+}
+
+async function deleteFolder() {
+  const folder = library.find((f) => f.name === openFolder);
+  const used = folder.photos.filter((p) => p.usedBy.length);
+  if (used.length) {
+    alert(`Can’t delete “${openFolder}”: ${used.length} of its photos ${used.length > 1 ? 'are' : 'is'} still used in posts. Move ${used.length > 1 ? 'them' : 'it'} to another folder first, or remove ${used.length > 1 ? 'them' : 'it'} from the posts.`);
+    return;
+  }
+  const n = folder.photos.length;
+  if (!confirm(n ? `Delete the folder “${openFolder}” and its ${n} photo${n > 1 ? 's' : ''}? This can’t be undone.` : `Delete the empty folder “${openFolder}”?`)) return;
+  if (await photoApi('DELETE', `/api/photos/folders?name=${encodeURIComponent(openFolder)}`)) { openFolder = ''; refreshPhotos(); }
+}
+
+slug ? showEditor() : params.has('photos') ? showPhotos() : showHome();

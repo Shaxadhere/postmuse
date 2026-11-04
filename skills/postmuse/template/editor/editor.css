@@ -98,3 +98,43 @@ select { border: 1px solid var(--ui-line); border-radius: 8px; padding: 6px 8px;
   .workspace { grid-template-columns: 1fr; grid-template-rows: minmax(320px, 1fr) auto; }
   .panel { border-left: 0; border-top: 1px solid var(--ui-line); max-height: 45vh; }
 }
+
+/* Photo library: the Photos page and the editor's photo picker. */
+.bar-nav { display: flex; gap: 4px; }
+.bar-nav a { padding: 7px 12px; border-radius: 8px; color: var(--ui-muted); text-decoration: none; font-weight: 700; }
+.bar-nav a:hover { color: var(--ui-text); }
+.bar-nav a.active { background: var(--ui-bg); color: var(--ui-accent); }
+.library { display: grid; grid-template-columns: 220px 1fr; gap: 24px; align-items: start; }
+.folders { background: var(--ui-panel); border: 1px solid var(--ui-line); border-radius: 14px; padding: 8px; }
+.folders ol { list-style: none; margin: 0; padding: 0; }
+.folders li { display: flex; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; overflow-wrap: anywhere; }
+.folders li small { color: var(--ui-muted); font-weight: 600; font-size: 12px; }
+.folders li:hover { background: var(--ui-bg); }
+.folders li.active { background: #ece8de; color: var(--ui-accent); font-weight: 700; }
+.folders li.drop { outline: 2px dashed #3b82f6; outline-offset: -2px; }
+.folder-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; min-height: 34px; }
+.folder-head h2 { margin: 0; font-size: 18px; }
+.row { display: flex; gap: 6px; flex-wrap: wrap; }
+.photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
+.photo-grid > .hint { grid-column: 1 / -1; margin: 0; }
+.photo-grid.drop { outline: 2px dashed #3b82f6; outline-offset: 6px; border-radius: 8px; }
+.photo { margin: 0; background: #fff; border: 1px solid var(--ui-line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; cursor: grab; }
+.photo img { width: 100%; aspect-ratio: 1; object-fit: cover; background: #ddd; display: block; pointer-events: none; }
+.photo figcaption { padding: 8px 10px 10px; display: grid; gap: 6px; }
+.photo b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.photo .used { color: #027a48; font-size: 12px; font-weight: 600; }
+.photo .unused { color: var(--ui-muted); font-size: 12px; }
+.photo select { flex: 1; min-width: 0; padding: 4px 6px; }
+.photo button { padding: 4px 10px; }
+.picker { width: min(860px, calc(100vw - 32px)); max-height: 80vh; overflow: auto; border: 1px solid var(--ui-line); border-radius: 14px; padding: 16px; background: var(--ui-panel); color: var(--ui-text); }
+.picker::backdrop { background: rgba(20, 19, 59, .35); }
+.picker-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.picker-head h2 { margin: 0 auto 0 0; font-size: 16px; }
+.picker .photo-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
+.picker .photo-grid > button { padding: 0; overflow: hidden; border-radius: 10px; aspect-ratio: 1; }
+.picker .photo-grid > button img { width: 100%; height: 100%; object-fit: cover; display: block; }
+@media (max-width: 720px) {
+  .home { padding: 16px; }
+  .library { grid-template-columns: 1fr; gap: 16px; }
+  .photo-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+}

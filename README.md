@@ -2,7 +2,7 @@
 
 **Postmuse** is a Claude skill that designs social media posts. Tell Claude what you want ("a launch post for our new menu, with this photo"). Postmuse sets up your brand kit, edits your photos and designs the post.
 
-**Atelier** is the small editor Postmuse gives you. Run `npm start` and finish the post in your browser: drag things around, retype, recolor, adjust photos and export a PNG.
+**Atelier** is the small editor Postmuse gives you. Run `npm start` and finish the post in your browser: drag things around, retype, recolor, adjust photos and export a PNG. Its **Photos** page keeps every post's photos in one library (`photos/`), where you can sort them into folders and delete the ones you don't need.
 
 ## Install the skill
 
@@ -52,6 +52,7 @@ skills/postmuse/
     scripts/photo.mjs      photo crop/color/stylize tool (sharp)
     brand/                 brand.json + BRAND.md (filled in for you)
     posts/                 your posts
+    photos/                your photo library, in folders
 ```
 
 ## Limits

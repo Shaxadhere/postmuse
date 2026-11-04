@@ -614,8 +614,11 @@ async function save() {
   setStatus('Saving…');
   const res = await fetch(`/api/posts/${slug}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ html }) });
   if (!res.ok) { setStatus('Save failed', true); return; }
-  savedHtml = current = html;
+  const data = await res.json();
+  // The server sends the post back when it pointed old photo paths at photos moved since this page opened.
+  if (data.html) { restore(data.html); savedHtml = current = serialize(); } else savedHtml = current = html;
   updateDirty();
+  if (data.html) setStatus('Saved · photo paths updated');
 }
 
 async function exportPng() {
@@ -753,7 +756,9 @@ async function showPhotos() {
 }
 
 async function refreshPhotos() {
-  library = await fetchLibrary();
+  const data = await (await fetch('/api/photos')).json();
+  library = data.folders;
+  renderLegacy(data.legacy);
   if (!library.some((f) => f.name === openFolder)) openFolder = '';
   renderFolders();
   renderPhotoGrid();
@@ -762,6 +767,19 @@ async function refreshPhotos() {
 async function uploadPhotos(files) {
   for (const file of files.filter((f) => f.type.startsWith('image/'))) await uploadImage(file, openFolder);
   refreshPhotos();
+}
+
+// Posts made before the library keep photos in posts/<slug>/assets/; offer to move them into photos/<slug>/.
+function renderLegacy(legacy) {
+  const banner = $('legacyBanner');
+  banner.hidden = !legacy.length;
+  if (!legacy.length) return;
+  const count = legacy.reduce((n, p) => n + p.count, 0);
+  banner.textContent = `${count} photo${count > 1 ? 's are' : ' is'} still stored inside ${legacy.length > 1 ? 'posts' : 'a post'} (${legacy.map((p) => `“${p.title}”`).join(', ')}), so ${count > 1 ? 'they don’t' : 'it doesn’t'} show here. `;
+  banner.append(button('Move into the library', async () => {
+    const data = await photoApi('POST', '/api/photos/import');
+    if (data) refreshPhotos();
+  }, 'primary'));
 }
 
 function renderFolders() {

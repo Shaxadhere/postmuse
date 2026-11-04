@@ -1,6 +1,6 @@
 // Atelier: serves the post editor and reads/writes posts in ./posts. No framework, no build step.
 import http from 'node:http';
-import { readFile, writeFile, readdir, mkdir, stat, rename, rm } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, stat, rename, rm, rmdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -8,6 +8,7 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const POSTS = path.join(ROOT, 'posts');
 const BRAND = path.join(ROOT, 'brand');
 const PHOTOS = path.join(ROOT, 'photos');
+const MOVES = path.join(PHOTOS, '.moves.json');
 const FONTSOURCE = path.join(ROOT, 'node_modules/@fontsource');
 const PORT = Number(process.env.PORT) || 4747;
 
@@ -135,6 +136,9 @@ const folderPath = (name) => (name ? photoPath(name, 'folder') : PHOTOS);
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const fileRef = (rel, flags = '') => new RegExp(`/photos/${escapeRe(rel)}(?![\\w.-])`, flags);
 const fail = (status, message, extra = {}) => Object.assign(new Error(message), { status, extra });
+const isImageEntry = (e) => e.isFile() && !e.name.startsWith('.') && IMAGE_EXT.has(path.extname(e.name).toLowerCase());
+// A src or url() value inside post.html: after a quote, "(" or the ";" of &quot;.
+const quotedRef = (ref) => new RegExp(`(["'(;])${escapeRe(ref)}(?![\\w.-])`, 'g');
 const usersOf = (rel, posts) => posts.filter((p) => fileRef(rel).test(p.html)).map((p) => ({ slug: p.slug, title: p.title }));
 
 async function postHtmls() {
@@ -153,6 +157,74 @@ async function rewriteRefs(pattern, replacement) {
   return changed;
 }
 
+// ---------- moves log: lets a post saved from an older editor tab follow photos that moved since ----------
+// Entries are { from, to } in post.html form ("/photos/a/x.jpg", or "/photos/a/" for a whole folder),
+// plus { post, from: "assets/x.jpg", to } for photos imported from a post's old assets/ folder.
+async function readMoves() {
+  try { return JSON.parse(await readFile(MOVES, 'utf8')); } catch { return []; }
+}
+async function logMoves(entries) {
+  if (!entries.length) return;
+  await mkdir(PHOTOS, { recursive: true });
+  await writeFile(MOVES, JSON.stringify([...(await readMoves()), ...entries].slice(-1000)) + '\n');
+}
+function refFile(slug, ref) {
+  const file = ref.startsWith('assets/') ? path.resolve(POSTS, slug, ref) : path.resolve(ROOT, '.' + ref);
+  return file.startsWith((ref.startsWith('assets/') ? path.join(POSTS, slug) : PHOTOS) + path.sep) ? file : null;
+}
+async function fixStaleRefs(slug, html) {
+  const moves = await readMoves();
+  if (!moves.length) return html;
+  const refs = new Set([...html.matchAll(/["'(;](\/photos\/[^"'()\s&]+|assets\/[^"'()\s&]+)/g)].map((m) => m[1]));
+  for (const ref of refs) {
+    let now = ref;
+    for (let hop = 0; hop < 20; hop++) {
+      const file = refFile(slug, now);
+      if (!file || (await exists(file))) break;
+      const m = moves.findLast((m) => (!m.post || m.post === slug) && (now === m.from || (m.from.endsWith('/') && now.startsWith(m.from))));
+      if (!m) break;
+      now = m.to + now.slice(m.from.length);
+    }
+    if (now !== ref && refFile(slug, now) && (await exists(refFile(slug, now)))) html = html.replace(quotedRef(ref), (_, pre) => pre + now);
+  }
+  return html;
+}
+
+// ---------- old layout: photos inside posts/<slug>/assets/, imported into photos/<slug>/ on request ----------
+async function legacyFiles(slug) {
+  try { return (await readdir(path.join(POSTS, slug, 'assets'), { withFileTypes: true })).filter(isImageEntry).map((e) => e.name); } catch { return []; }
+}
+async function listLegacy() {
+  const out = [];
+  for (const p of await listPosts()) {
+    const count = (await legacyFiles(p.slug)).length;
+    if (count) out.push({ slug: p.slug, title: p.title, count });
+  }
+  return out;
+}
+async function importLegacy() {
+  const moves = [];
+  for (const p of await listPosts()) {
+    const files = await legacyFiles(p.slug);
+    if (!files.length) continue;
+    const dir = folderPath(p.slug);
+    await mkdir(dir, { recursive: true });
+    const htmlFile = path.join(POSTS, p.slug, 'post.html');
+    let html = await readFile(htmlFile, 'utf8');
+    for (const file of files) {
+      const name = await uniqueFile(dir, file);
+      await rename(path.join(POSTS, p.slug, 'assets', file), path.join(dir, name));
+      const from = `assets/${file}`, to = `/photos/${p.slug}/${name}`;
+      html = html.replace(quotedRef(from), (_, pre) => pre + to);
+      moves.push({ post: p.slug, from, to });
+    }
+    await writeFile(htmlFile, html);
+    try { await rmdir(path.join(POSTS, p.slug, 'assets')); } catch {} // only goes if nothing else is left in it
+  }
+  await logMoves(moves);
+  return moves.length;
+}
+
 async function listPhotos() {
   await mkdir(PHOTOS, { recursive: true });
   const posts = await postHtmls();
@@ -162,14 +234,13 @@ async function listPhotos() {
     const { size, mtimeMs } = await stat(path.join(PHOTOS, rel));
     folder.photos.push({ name: file, path: rel, src: `/photos/${rel}`, size, updated: mtimeMs, usedBy: usersOf(rel, posts) });
   };
-  const isImage = (e) => e.isFile() && !e.name.startsWith('.') && IMAGE_EXT.has(path.extname(e.name).toLowerCase());
   for (const entry of await readdir(PHOTOS, { withFileTypes: true })) {
     if (entry.name.startsWith('.')) continue;
     if (entry.isDirectory()) folders.push({ name: entry.name, photos: [] });
-    else if (isImage(entry)) await add(folders[0], entry.name);
+    else if (isImageEntry(entry)) await add(folders[0], entry.name);
   }
   for (const folder of folders.slice(1)) {
-    for (const entry of await readdir(path.join(PHOTOS, folder.name), { withFileTypes: true })) if (isImage(entry)) await add(folder, entry.name);
+    for (const entry of await readdir(path.join(PHOTOS, folder.name), { withFileTypes: true })) if (isImageEntry(entry)) await add(folder, entry.name);
   }
   for (const folder of folders) folder.photos.sort((a, b) => b.updated - a.updated);
   return [folders[0], ...folders.slice(1).sort((a, b) => a.name.localeCompare(b.name))];
@@ -191,7 +262,10 @@ async function handlePhotos(req, res, url, parts) {
   const json = async () => JSON.parse((await readBody(req)).toString('utf8') || '{}');
   const q = (k) => url.searchParams.get(k) || '';
 
-  if (parts.length === 2 && req.method === 'GET') return send(res, 200, { folders: await listPhotos() });
+  if (parts.length === 2 && req.method === 'GET') return send(res, 200, { folders: await listPhotos(), legacy: await listLegacy() });
+
+  // POST /api/photos/import  moves every post's old assets/ photos into photos/<slug>/
+  if (parts[2] === 'import' && req.method === 'POST') return send(res, 200, { moved: await importLegacy() });
 
   // POST /api/photos?folder=summer&name=photo.jpg  (raw file body)
   if (parts.length === 2 && req.method === 'POST') {
@@ -229,6 +303,7 @@ async function handlePhotos(req, res, url, parts) {
     const name = await uniqueFile(dir, path.basename(from));
     const to = folder ? `${folder}/${name}` : name;
     await rename(from, path.join(dir, name));
+    await logMoves([{ from: `/photos/${rel}`, to: `/photos/${to}` }]);
     return send(res, 200, { path: to, updated: await rewriteRefs(fileRef(rel, 'g'), `/photos/${to}`) });
   }
 
@@ -251,6 +326,7 @@ async function handlePhotos(req, res, url, parts) {
     if (name === body.from) return send(res, 200, { name, updated: [] });
     if (await exists(folderPath(name))) return send(res, 409, { error: `A folder called “${name}” already exists` });
     await rename(from, folderPath(name));
+    await logMoves([{ from: `/photos/${body.from}/`, to: `/photos/${name}/` }]);
     return send(res, 200, { name, updated: await rewriteRefs(new RegExp(`/photos/${escapeRe(body.from)}/`, 'g'), `/photos/${name}/`) });
   }
 
@@ -295,8 +371,10 @@ async function handleApi(req, res, url) {
   if (parts.length === 3 && req.method === 'PUT') {
     const { html } = JSON.parse((await readBody(req)).toString('utf8'));
     if (typeof html !== 'string' || !html.includes('data-post')) return send(res, 400, { error: 'Missing post root' });
-    await writeFile(path.join(dir, 'post.html'), html.trimEnd() + '\n');
-    return send(res, 200, { ok: true });
+    // The editor may still hold paths to photos that were moved since it opened; save the current ones.
+    const fixed = await fixStaleRefs(slug, html.trimEnd());
+    await writeFile(path.join(dir, 'post.html'), fixed + '\n');
+    return send(res, 200, fixed === html.trimEnd() ? { ok: true } : { ok: true, html: fixed });
   }
 
   return send(res, 405, { error: 'Method not allowed' });
